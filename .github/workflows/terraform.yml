@@ -43,12 +43,23 @@ jobs:      # Ação do workflow
           role-session-name: GitHub_to_AWS_via_FederatedOIDC
           aws-region: ${{ inputs.aws-region }}
 
-      - name: Read destroy configuration           # Lê a configuração de destruição
+      - name: Read destroy configuration           # Lê a configuração de destruição de forma segura
         id: read-destroy-config
         run: |
-          DESTROY="$(jq -r '.${{ inputs.environment }}' ./Infra/destroy_config.json)"
-          echo "destroy=$(echo $DESTROY)" >> $GITHUB_OUTPUT
-          
+          # Verifica se o arquivo existe; se não existir, assume 'false' para evitar falha do workflow
+          if [ -f ./Infra/destroy_config.json ]; then
+            # Usa --arg para passar o ambiente pro jq e fallback para "false" caso a chave não exista
+            DESTROY=$(jq -r --arg env "${{ inputs.environment }}" '.[$env] // "false"' ./Infra/destroy_config.json)
+            # Se jq retornar null/empty, define false
+            if [ -z "$DESTROY" ] || [ "$DESTROY" = "null" ]; then
+              DESTROY=false
+            fi
+          else
+            DESTROY=false
+          fi
+          echo "destroy=$DESTROY" >> $GITHUB_OUTPUT
+          echo "Read destroy configuration -> $DESTROY"
+
       - name: Terraform Init        # Inicializa o Terraform e passa umas configurações para o backend
         run: |
           cd Infra && terraform init \
