@@ -1,0 +1,79 @@
+name: "Terraform Workflow"
+
+on:
+  workflow_call:
+    inputs:       # Entradas para a chamada do workflow
+      environment:
+        type: string
+        required: true
+      aws-assume-role-arn:
+        type: string
+        required: true
+      aws-region:
+        type: string
+        required: true
+      aws-statefile-s3-bucket:
+        type: string
+        required: true
+      aws-lock-dynamodb-table:
+        type: string
+        required: true
+
+jobs:      # Ação do workflow
+  terraform:
+    runs-on: ubuntu-latest     # O SO onde a ação será executada
+
+    defaults:
+      run:
+        shell: bash       # Define o shell padrão para os comandos run
+
+    steps:   # Passos do job
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.8.3
+
+      - name: Configure AWS credentials                        # Credenciais AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ inputs.aws-assume-role-arn }}
+          role-session-name: GitHub_to_AWS_via_FederatedOIDC
+          aws-region: ${{ inputs.aws-region }}
+
+      - name: Read destroy configuration           # Lê a configuração de destruição
+        id: read-destroy-config
+        run: |
+          DESTROY="$(jq -r '.${{ inputs.environment }}' ./Infra/destroy_config.json)"
+          echo "destroy=$(echo $DESTROY)" >> $GITHUB_OUTPUT
+          
+      - name: Terraform Init        # Inicializa o Terraform e passa umas configurações para o backend
+        run: |
+          cd Infra && terraform init \
+            -backend-config="bucket=${{ inputs.aws-statefile-s3-bucket }}" \
+            -backend-config="key=${{ github.event.repository.name }}" \
+            -backend-config="region=${{ inputs.aws-region }}" \
+            -backend-config="dynamodb_table=${{ inputs.aws-lock-dynamodb-table }}"
+
+      - name: Terraform Validate        # Valida se não tem erro de sixtaxe etc
+        run: |
+          cd Infra && terraform validate
+
+      - name: Terraform Plan        # Cria o plano de execução do terraform
+        if: steps.read-destroy-config.outputs.destroy != 'true'
+        id: terraform-plan
+        run: |
+          cd Infra &&
+          terraform workspace select ${{ inputs.environment }} || terraform workspace new ${{ inputs.environment }} &&
+          terraform plan -var-file="./envs/${{ inputs.environment }}/terraform.tfvars" -out="${{ inputs.environment }}.plan"
+
+
+      - name: Terraform Apply           # Aplica o plano criado anteriormente
+        if: steps.read-destroy-config.outputs.destroy != 'true'
+        id: terraform-apply
+        run: |
+          cd Infra &&
+          terraform workspace select ${{ inputs.environment }} || terraform workspace new ${{ inputs.environment }} &&
+          terraform apply "${{ inputs.environment }}.plan"
