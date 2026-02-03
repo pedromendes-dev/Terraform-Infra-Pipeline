@@ -119,6 +119,7 @@ jobs:
           fi
           echo "Using backend bucket: $EFFECTIVE_BUCKET"
           export TF_VAR_bucket_name="$EFFECTIVE_BUCKET"
+          export TF_VAR_aws_region="${{ inputs.aws-region }}"
           cd Infra && terraform init \
             -backend-config="bucket=${EFFECTIVE_BUCKET}" \
             -backend-config="key=${{ github.event.repository.name }}" \
@@ -134,6 +135,7 @@ jobs:
             EFFECTIVE_BUCKET="${{ inputs.aws-statefile-s3-bucket }}"
           fi
           export TF_VAR_bucket_name="$EFFECTIVE_BUCKET"
+          export TF_VAR_aws_region="${{ inputs.aws-region }}"
           cd Infra && terraform validate
 
       - name: Terraform Destroy
@@ -146,6 +148,7 @@ jobs:
             EFFECTIVE_BUCKET="${{ inputs.aws-statefile-s3-bucket }}"
           fi
           export TF_VAR_bucket_name="$EFFECTIVE_BUCKET"
+          export TF_VAR_aws_region="${{ inputs.aws-region }}"
           cd Infra &&
           terraform workspace select ${{ inputs.environment }} || terraform workspace new ${{ inputs.environment }} &&
           terraform destroy -var-file="./envs/${{ inputs.environment }}/terraform.tfvars" -auto-approve
@@ -160,6 +163,7 @@ jobs:
             EFFECTIVE_BUCKET="${{ inputs.aws-statefile-s3-bucket }}"
           fi
           export TF_VAR_bucket_name="$EFFECTIVE_BUCKET"
+          export TF_VAR_aws_region="${{ inputs.aws-region }}"
           cd Infra &&
           terraform workspace select ${{ inputs.environment }} || terraform workspace new ${{ inputs.environment }} &&
           terraform plan -var-file="./envs/${{ inputs.environment }}/terraform.tfvars" -out="${{ inputs.environment }}.plan"
@@ -174,6 +178,7 @@ jobs:
             EFFECTIVE_BUCKET="${{ inputs.aws-statefile-s3-bucket }}"
           fi
           export TF_VAR_bucket_name="$EFFECTIVE_BUCKET"
+          export TF_VAR_aws_region="${{ inputs.aws-region }}"
           cd Infra &&
           terraform workspace select ${{ inputs.environment }} || terraform workspace new ${{ inputs.environment }} &&
           terraform apply "${{ inputs.environment }}.plan"
