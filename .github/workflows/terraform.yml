@@ -36,12 +36,105 @@ jobs:      # Ação do workflow
         with:
           terraform_version: 1.8.3
 
+      - name: Preflight - validate inputs & DNS (fail-fast)
+        run: |
+          echo "Preflight: validando inputs não-secrets e resolução STS..."
+          ENV="${{ inputs.environment }}"
+          ROLE="${{ inputs.aws-assume-role-arn }}"
+          REGION="${{ inputs.aws-region }}"
+          BUCKET="${{ inputs.aws-statefile-s3-bucket }}"
+          LOCK="${{ inputs.aws-lock-dynamodb-table }}"
+
+          echo "environment=$ENV"
+          # Checa se os inputs obrigatórios estão presentes
+          MISSING=false
+          if [ -z "$ENV" ]; then echo "ERROR: input 'environment' está vazio"; MISSING=true; fi
+          if [ -z "$ROLE" ]; then echo "ERROR: input 'aws-assume-role-arn' está vazio"; MISSING=true; fi
+          if [ -z "$REGION" ]; then echo "ERROR: input 'aws-region' está vazio"; MISSING=true; fi
+          if [ -z "$BUCKET" ]; then echo "ERROR: input 'aws-statefile-s3-bucket' está vazio"; MISSING=true; fi
+          if [ -z "$LOCK" ]; then echo "ERROR: input 'aws-lock-dynamodb-table' está vazio"; MISSING=true; fi
+
+          if [ "$MISSING" = true ]; then
+            echo "Um ou mais inputs obrigatórios estão faltando. Verifique os 'secrets' e a chamada ao workflow.";
+            exit 1;
+          fi
+
+          # Validação básica de formato da região (ex: us-east-1, sa-east-1, eu-west-3)
+          if ! echo "$REGION" | grep -E '^[a-z]{2}(-[a-z]+)+-[0-9]+$' > /dev/null 2>&1; then
+            echo "ERROR: 'aws-region' ($REGION) parece inválido. Verifique o valor em secrets/config.";
+            exit 1;
+          fi
+
+          # Resolve STS endpoint and ensure reachability — try several methods to avoid missing tools
+          STS_HOST="sts.${REGION}.amazonaws.com"
+          echo "Resolving $STS_HOST"
+
+          resolve_ok=false
+
+          if command -v nslookup >/dev/null 2>&1; then
+            nslookup "$STS_HOST" >/dev/null 2>&1 && resolve_ok=true || resolve_ok=false
+          elif command -v getent >/dev/null 2>&1; then
+            getent hosts "$STS_HOST" >/dev/null 2>&1 && resolve_ok=true || resolve_ok=false
+          elif command -v python3 >/dev/null 2>&1; then
+            # Usa um one-liner Python sem quebras de linha para evitar problemas de parsing YAML
+            python3 -c "import socket,sys; socket.gethostbyname('$STS_HOST'); sys.exit(0)" >/dev/null 2>&1 || true
+            if [ $? -eq 0 ]; then resolve_ok=true; else resolve_ok=false; fi
+          else
+            echo "WARNING: nenhuma ferramenta disponível para checar DNS (nslookup/getent/python). Pulando checagem de DNS; isso pode causar ENOTFOUND mais adiante.";
+          fi
+
+          if [ "$resolve_ok" != true ]; then
+            echo "ERROR: não foi possível resolver $STS_HOST. Verifique AWS_REGION e conectividade DNS (ou typo na região).";
+            echo "Sugestão: setar AWS_REGION para a região correta (ex: us-east-2) nos secrets do repositório.";
+            exit 1;
+          fi
+
+          echo "$STS_HOST resolvido com sucesso"
+
+          # Teste simples de conexão HTTPS (se curl disponível)
+          if command -v curl >/dev/null 2>&1; then
+            if ! curl -I -sS --max-time 5 "https://$STS_HOST" > /dev/null 2>&1; then
+              echo "WARNING: não foi possível conectar a https://$STS_HOST (mas DNS resolveu). Pode ser bloqueio de rede ou endpoint temporariamente inacessível.";
+            fi
+          fi
+
       - name: Configure AWS credentials                        # Credenciais AWS
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ inputs.aws-assume-role-arn }}
           role-session-name: GitHub_to_AWS_via_FederatedOIDC
           aws-region: ${{ inputs.aws-region }}
+
+      - name: Verify backend resources (S3 bucket & DynamoDB table)
+        run: |
+          echo "Verificando backend: bucket S3 e tabela DynamoDB..."
+          REGION="${{ inputs.aws-region }}"
+          BUCKET="${{ inputs.aws-statefile-s3-bucket }}"
+          LOCK="${{ inputs.aws-lock-dynamodb-table }}"
+
+          # Checa se aws CLI está disponível
+          if ! command -v aws >/dev/null 2>&1; then
+            echo "ERROR: aws CLI não encontrada no runner. Não é possível verificar recursos do backend.";
+            exit 1;
+          fi
+
+          # Tenta validar acesso ao bucket S3
+          echo "Checando bucket S3: $BUCKET (região: $REGION)"
+          if ! aws s3api head-bucket --bucket "$BUCKET" --region "$REGION" >/dev/null 2>&1; then
+            echo "ERROR: bucket S3 '$BUCKET' não existe ou não é acessível com as credenciais atuais.";
+            echo "Verifique: nome do bucket, região, e permissões (s3:ListBucket, s3:GetObject, s3:PutObject).";
+            exit 1;
+          fi
+          echo "Bucket S3 acessível."
+
+          # Tenta validar existência/acesso da tabela DynamoDB
+          echo "Checando tabela DynamoDB: $LOCK"
+          if ! aws dynamodb describe-table --table-name "$LOCK" --region "$REGION" >/dev/null 2>&1; then
+            echo "ERROR: tabela DynamoDB '$LOCK' não existe ou não é acessível com as credenciais atuais.";
+            echo "Verifique: nome da tabela e permissões (dynamodb:DescribeTable, dynamodb:GetItem, dynamodb:UpdateItem).";
+            exit 1;
+          fi
+          echo "Tabela DynamoDB acessível."
 
       - name: Read destroy configuration           # Lê a configuração de destruição de forma segura
         id: read-destroy-config

@@ -16,8 +16,8 @@ jobs:
     uses: ./.github/workflows/terraform.yml          # Reutiliza o workflow terraform.yml
     with:     # Passar parâmetros para o workflow reutilizável
       environment: "dev"
-      aws-assume-role-arn: "arn:aws:iam::559050205686:role/github-action-pedromende-dev-pipeline"
-      # Atenção: alterado para a região real do bucket S3 (conserte se o bucket alvo estiver em outra região)
-      aws-region: "sa-east-2"
-      aws-statefile-s3-bucket: "pedromendes-dev-sa-east-1-tarraform-statefile"
-      aws-lock-dynamodb-table: "pedromendes-dev-sa-east-1-terraform-lock"
+      # Valores sensíveis devem vir de Secrets (Settings > Secrets)
+      aws-assume-role-arn: ${{ secrets.AWS_ASSUME_ROLE_ARN }}
+      aws-region: ${{ secrets.AWS_REGION }}
+      aws-statefile-s3-bucket: ${{ secrets.AWS_STATEFILE_S3_BUCKET }}
+      aws-lock-dynamodb-table: ${{ secrets.AWS_LOCK_DYNAMODB_TABLE }}
