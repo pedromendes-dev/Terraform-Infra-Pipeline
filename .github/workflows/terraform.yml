@@ -6,17 +6,15 @@ on:
       environment:
         type: string
         required: true
-      aws-assume-role-arn:
-        type: string
-        required: true
       aws-region:
         type: string
         required: true
-      aws-statefile-s3-bucket:
-        type: string
+    secrets:
+      AWS_ASSUME_ROLE_ARN:
         required: true
-      aws-lock-dynamodb-table:
-        type: string
+      AWS_STATEFILE_S3_BUCKET:
+        required: true
+      AWS_LOCK_DYNAMODB_TABLE:
         required: true
 
 jobs:      # Ação do workflow
@@ -40,22 +38,22 @@ jobs:      # Ação do workflow
         run: |
           echo "Preflight: validando inputs não-secrets e resolução STS..."
           ENV="${{ inputs.environment }}"
-          ROLE="${{ inputs.aws-assume-role-arn }}"
+          ROLE="${{ secrets.AWS_ASSUME_ROLE_ARN }}"
           REGION="${{ inputs.aws-region }}"
-          BUCKET="${{ inputs.aws-statefile-s3-bucket }}"
-          LOCK="${{ inputs.aws-lock-dynamodb-table }}"
+          BUCKET="${{ secrets.AWS_STATEFILE_S3_BUCKET }}"
+          LOCK="${{ secrets.AWS_LOCK_DYNAMODB_TABLE }}"
 
           echo "environment=$ENV"
           # Checa se os inputs obrigatórios estão presentes
           MISSING=false
           if [ -z "$ENV" ]; then echo "ERROR: input 'environment' está vazio"; MISSING=true; fi
-          if [ -z "$ROLE" ]; then echo "ERROR: input 'aws-assume-role-arn' está vazio"; MISSING=true; fi
+          if [ -z "$ROLE" ]; then echo "ERROR: secret 'AWS_ASSUME_ROLE_ARN' está vazio"; MISSING=true; fi
           if [ -z "$REGION" ]; then echo "ERROR: input 'aws-region' está vazio"; MISSING=true; fi
-          if [ -z "$BUCKET" ]; then echo "ERROR: input 'aws-statefile-s3-bucket' está vazio"; MISSING=true; fi
-          if [ -z "$LOCK" ]; then echo "ERROR: input 'aws-lock-dynamodb-table' está vazio"; MISSING=true; fi
+          if [ -z "$BUCKET" ]; then echo "ERROR: secret 'AWS_STATEFILE_S3_BUCKET' está vazio"; MISSING=true; fi
+          if [ -z "$LOCK" ]; then echo "ERROR: secret 'AWS_LOCK_DYNAMODB_TABLE' está vazio"; MISSING=true; fi
 
           if [ "$MISSING" = true ]; then
-            echo "Um ou mais inputs obrigatórios estão faltando. Verifique os 'secrets' e a chamada ao workflow.";
+            echo "Um ou mais inputs/segredos obrigatórios estão faltando. Verifique os 'secrets' e a chamada ao workflow.";
             exit 1;
           fi
 
@@ -101,7 +99,7 @@ jobs:      # Ação do workflow
       - name: Configure AWS credentials                        # Credenciais AWS
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ inputs.aws-assume-role-arn }}
+          role-to-assume: ${{ secrets.AWS_ASSUME_ROLE_ARN }}
           role-session-name: GitHub_to_AWS_via_FederatedOIDC
           aws-region: ${{ inputs.aws-region }}
 
@@ -109,8 +107,8 @@ jobs:      # Ação do workflow
         run: |
           echo "Verificando backend: bucket S3 e tabela DynamoDB..."
           REGION="${{ inputs.aws-region }}"
-          BUCKET="${{ inputs.aws-statefile-s3-bucket }}"
-          LOCK="${{ inputs.aws-lock-dynamodb-table }}"
+          BUCKET="${{ secrets.AWS_STATEFILE_S3_BUCKET }}"
+          LOCK="${{ secrets.AWS_LOCK_DYNAMODB_TABLE }}"
 
           # Checa se aws CLI está disponível
           if ! command -v aws >/dev/null 2>&1; then
@@ -156,10 +154,10 @@ jobs:      # Ação do workflow
       - name: Terraform Init        # Inicializa o Terraform e passa umas configurações para o backend
         run: |
           cd Infra && terraform init \
-            -backend-config="bucket=${{ inputs.aws-statefile-s3-bucket }}" \
+            -backend-config="bucket=${{ secrets.AWS_STATEFILE_S3_BUCKET }}" \
             -backend-config="key=${{ github.event.repository.name }}" \
             -backend-config="region=${{ inputs.aws-region }}" \
-            -backend-config="dynamodb_table=${{ inputs.aws-lock-dynamodb-table }}"
+            -backend-config="dynamodb_table=${{ secrets.AWS_LOCK_DYNAMODB_TABLE }}"
 
       - name: Terraform Validate        # Valida se não tem erro de sixtaxe etc
         run: |
