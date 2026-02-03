@@ -29,6 +29,19 @@ cd Infra
 - Backend: `Infra/backend-dev.hcl` (usa o bucket existente e `us-east-2`).
 - Variáveis: `Infra/envs/dev/terraform.tfvars` e `Infra/envs/prod/terraform.tfvars`.
 
+## Cuidados importantes
+- O backend do Terraform (S3 + DynamoDB para lock) armazena o state. NÃO altere os
+  valores do backend (bucket/key/region) sem validar: mover o backend pode causar
+  perda de acesso ao state ou criar estados duplicados.
+- Os arquivos em `Infra/envs/*` contêm nomes literais de buckets/recursos. Alterações
+  nesses arquivos devem ser feitas com revisão e, preferencialmente, em coordenação
+  com a equipe responsável pelo ambiente.
+- Em CI (GitHub Actions) a região e o bucket do backend são passados via inputs ao
+  workflow e exportados como `TF_VAR_aws_region` e `TF_VAR_bucket_name` durante a execução.
+- Ao rodar localmente, exporte `AWS_REGION` ou defina `TF_VAR_aws_region` e verifique
+  que suas credenciais/role tenham permissão para acessar/criar o bucket (s3:CreateBucket,
+  s3:ListBucket, s3:GetObject, s3:PutObject).
+
 ---
 
 Desenvolvido por Build & Run

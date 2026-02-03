@@ -1,2 +1,47 @@
-.idea
-.terraform
+# IDEs
+.idea/
+.vscode/
+*.iml
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+# keep .terraform.lock.hcl committed for reproducible provider versions
+
+# Terraform variable files that may contain secrets
+*.tfvars
+*.tfvars.json
+
+# Terraform CLI config
+.terraformrc
+terraform.rc
+
+# Secrets, keys and logs
+*.pem
+*.key
+*.crt
+.env
+*.env
+*.log
+logs/
+
+# PowerShell
+*.ps1xml
+
+# Misc
+dist/
+build/
+
+
+.Infra/backend-dev.tfstate
+.Infra/backend-prod.tfstate
