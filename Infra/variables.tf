@@ -5,5 +5,5 @@ variable "bucket_name" {
 variable "aws_region" {
   type        = string
   description = "AWS region to use for provider and backend"
-  default     = "sa-east-1"
+  default     = "us-east-2"
 }
