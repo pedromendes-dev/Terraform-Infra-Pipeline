@@ -17,6 +17,7 @@ jobs:
     with:     # Passar parâmetros para o workflow reutilizável
       environment: "dev"
       aws-assume-role-arn: "arn:aws:iam::559050205686:role/github-action-pedromende-dev-pipeline"
-      aws-region: "sa-east-1"
+      # Atenção: alterado para a região real do bucket S3 (conserte se o bucket alvo estiver em outra região)
+      aws-region: "sa-east-2"
       aws-statefile-s3-bucket: "pedromendes-dev-sa-east-1-tarraform-statefile"
       aws-lock-dynamodb-table: "pedromendes-dev-sa-east-1-terraform-lock"
