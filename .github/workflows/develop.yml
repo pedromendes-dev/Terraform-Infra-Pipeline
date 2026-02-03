@@ -17,4 +17,5 @@ jobs:
       aws-assume-role-arn: "arn:aws:iam::559050205686:role/github-action-pedromende-dev-pipeline"
       aws-region: "us-east-2"
       aws-statefile-s3-bucket: "pedromendes-dev-us-east-2-tarraform-statefile"
+      allow-create-bucket: true
       aws-lock-dynamodb-table: "pedromendes-dev-us-east-2-terraform-lock"

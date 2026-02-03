@@ -18,6 +18,10 @@ on:
       aws-lock-dynamodb-table:
         type: string
         required: true
+      allow-create-bucket:
+        type: boolean
+        required: false
+        default: false
 
 jobs:
   terraform:
@@ -73,17 +77,44 @@ jobs:
             echo "O bucket '$BUCKET' existe e está acessível."
             echo "bucket_name=$BUCKET" >> $GITHUB_OUTPUT
           else
-            echo "O bucket '$BUCKET' não existe ou não está acessível; tentando criar um bucket alternativo usando ID da conta + nome do repositório..."
+            echo "O bucket '$BUCKET' não existe ou não está acessível;"
+            # Se criação automática não for permitida, falhar com instrução clara
+            if [ "${{ inputs.allow-create-bucket }}" != "true" ]; then
+              echo "AVISO: criação automática de bucket está desabilitada (input allow-create-bucket != true).";
+              echo "Forneça um bucket existente através do input 'aws-statefile-s3-bucket' ou habilite 'allow-create-bucket' para permitir que o workflow crie um bucket fallback.";
+              exit 1
+            fi
+            echo "Tentando criar um bucket alternativo (criação automática habilitada)..."
             # Obtain account id to build a safe unique bucket name
             ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text || true)
             REPO="${{ github.event.repository.name }}"
             ENV="${{ inputs.environment }}"
-              if [ -n "$ACCOUNT_ID" ]; then
-              FALLBACK_BUCKET="${REPO}-${ENV}-${ACCOUNT_ID}-tfstate"
+            # Sanitize repository and environment strings to comply with S3 bucket naming rules:
+            # - must be lowercase
+            # - allowed characters: a-z, 0-9, dot and hyphen
+            # - replace other chars with hyphen, collapse repeated hyphens, and trim
+            SAFE_REPO=$(echo "$REPO" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9.-]/-/g; s/-\{2,\}/-/g; s/^-//; s/-$//')
+            SAFE_ENV=$(echo "$ENV" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9.-]/-/g; s/-\{2,\}/-/g; s/^-//; s/-$//')
+            # Truncate parts to keep final name <= 63 chars
+            SAFE_REPO=${SAFE_REPO:0:30}
+            SAFE_ENV=${SAFE_ENV:0:12}
+            if [ -n "$ACCOUNT_ID" ] && [ "$ACCOUNT_ID" != "None" ]; then
+              ID_PART="$ACCOUNT_ID"
             else
-              # último recurso: bucket alternativo com carimbo de tempo (timestamp)
-              FALLBACK_BUCKET="${REPO}-${ENV}-tfstate-$(date +%s)"
+              ID_PART="$(date +%s)"
             fi
+            # Use a short hash to ensure uniqueness without long names
+            if command -v sha1sum >/dev/null 2>&1; then
+              HASH=$(printf "%s-%s-%s" "$REPO" "$ENV" "$ID_PART" | sha1sum | awk '{print $1}' | cut -c1-8)
+            else
+              HASH=$(printf "%s-%s-%s" "$REPO" "$ENV" "$ID_PART" | sha1 | awk '{print $1}' | cut -c1-8 2>/dev/null || true)
+            fi
+            if [ -z "$HASH" ]; then
+              HASH="$(date +%s | cut -c1-8)"
+            fi
+            FALLBACK_BUCKET="${SAFE_REPO}-${SAFE_ENV}-${HASH}-tfstate"
+            # ensure lowercase and remove any accidental leading/trailing hyphen
+            FALLBACK_BUCKET=$(echo "$FALLBACK_BUCKET" | tr '[:upper:]' '[:lower:]' | sed 's/^-//; s/-$//')
             echo "Tentando bucket alternativo: $FALLBACK_BUCKET"
 
             if [ "$REGION" = "us-east-1" ]; then
@@ -108,14 +139,6 @@ jobs:
               exit 1
             fi
           fi
-
-
-      - name:  Read destroy configuration
-        id: read-destroy-config
-        run: |
-          DESTROY="$(jq -r '.${{ inputs.environment }}' ./infra/destroy_config.json)"
-          echo "destroy=$(echo $DESTROY)" >> $GITHUB_OUTPUT
-
 
       - name: Inicializar Terraform
         run: |
@@ -190,5 +213,4 @@ jobs:
           cd Infra &&
           terraform workspace select ${{ inputs.environment }} || terraform workspace new ${{ inputs.environment }} &&
           terraform apply "${{ inputs.environment }}.plan"
-
 
