@@ -18,3 +18,4 @@ jobs:
       aws-region: "us-east-2"
       aws-statefile-s3-bucket: "pedromendes-dev-us-east-2-tarraform-statefile"
       aws-lock-dynamodb-table: "pedromendes-dev-us-east-2-terraform-lock"
+
