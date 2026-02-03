@@ -14,9 +14,9 @@ permissions:         # Permissões do token de acesso do GitHub
 jobs:
   terraform:
     uses: ./.github/workflows/terraform.yml          # Reutiliza o workflow terraform.yml
-    with:     # Passar parâmentros para o workflow reutilizável
-        environment: "dev"
-        aws-assume-role: "arn:aws:iam::559050205686:role/github-action-pedromende-dev-pipeline"
-        aws-region: "sa-east-1"
-        aws-state-bucket: "pedromendes-dev-sa-east-1-tarraform-statefile"
-        aws-lock-dynamodb-table: "pedromendes-dev-sa-east-1-terraform-lock"
+    with:     # Passar parâmetros para o workflow reutilizável
+      environment: "dev"
+      aws-assume-role-arn: "arn:aws:iam::559050205686:role/github-action-pedromende-dev-pipeline"
+      aws-region: "sa-east-1"
+      aws-statefile-s3-bucket: "pedromendes-dev-sa-east-1-tarraform-statefile"
+      aws-lock-dynamodb-table: "pedromendes-dev-sa-east-1-terraform-lock"
