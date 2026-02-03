@@ -1,0 +1,184 @@
+name: "Terraform Workflow"
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        type: string
+        required: true
+      aws-assume-role-arn:
+        type: string
+        required: true
+      aws-region:
+        type: string
+        required: true
+      aws-statefile-s3-bucket:
+        type: string
+        required: true
+      aws-lock-dynamodb-table:
+        type: string
+        required: true
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.8.3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ inputs.aws-assume-role-arn }}
+          role-session-name: GitHub_to_AWS_via_FederatedOIDC
+          aws-region: ${{ inputs.aws-region }}
+
+      - name: Read destroy configuration
+        id: read-destroy-config
+        run: |
+          # Ler destroy_config.json de forma segura: se não existir, assume false
+          if [ -f ./Infra/destroy_config.json ]; then
+            DESTROY=$(jq -r --arg env "${{ inputs.environment }}" '.[$env] // "false"' ./Infra/destroy_config.json) || DESTROY=false
+            if [ -z "${DESTROY}" ] || [ "${DESTROY}" = "null" ]; then
+              DESTROY=false
+            fi
+          else
+            DESTROY=false
+          fi
+          echo "destroy=$DESTROY" >> $GITHUB_OUTPUT
+
+      - name: Ensure S3 backend bucket exists
+        id: ensure-backend
+        run: |
+          REGION="${{ inputs.aws-region }}"
+          BUCKET="${{ inputs.aws-statefile-s3-bucket }}"
+          echo "Checking S3 bucket: $BUCKET in region $REGION"
+
+          if ! command -v aws >/dev/null 2>&1; then
+            echo "ERROR: aws CLI not found on runner. Cannot verify/create S3 bucket.";
+            exit 1
+          fi
+
+          # Check if bucket exists and is accessible
+          if aws s3api head-bucket --bucket "$BUCKET" --region "$REGION" >/dev/null 2>&1; then
+            echo "Bucket '$BUCKET' exists and is accessible."
+            echo "bucket_name=$BUCKET" >> $GITHUB_OUTPUT
+          else
+            echo "Bucket '$BUCKET' does not exist or is not accessible; attempting to create a fallback bucket using account id + repo name..."
+            # Obtain account id to build a safe unique bucket name
+            ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text || true)
+            REPO="${{ github.event.repository.name }}"
+            ENV="${{ inputs.environment }}"
+            if [ -n "$ACCOUNT_ID" ]; then
+              FALLBACK_BUCKET="${REPO}-${ENV}-${ACCOUNT_ID}-tfstate"
+            else
+              # last resort fallback with timestamp
+              FALLBACK_BUCKET="${REPO}-${ENV}-tfstate-$(date +%s)"
+            fi
+            echo "Trying fallback bucket: $FALLBACK_BUCKET"
+
+            if [ "$REGION" = "us-east-1" ]; then
+              aws s3api create-bucket --bucket "$FALLBACK_BUCKET" >/dev/null 2>&1 || true
+            else
+              aws s3api create-bucket --bucket "$FALLBACK_BUCKET" --create-bucket-configuration LocationConstraint=$REGION --region $REGION >/dev/null 2>&1 || true
+            fi
+
+            if aws s3api head-bucket --bucket "$FALLBACK_BUCKET" --region "$REGION" >/dev/null 2>&1; then
+              echo "Fallback bucket '$FALLBACK_BUCKET' created and is accessible."
+              echo "bucket_name=$FALLBACK_BUCKET" >> $GITHUB_OUTPUT
+            else
+              echo "ERROR: failed to create or access bucket '$FALLBACK_BUCKET'. Checking cause..."
+              ERR=$(aws s3api create-bucket --bucket "$FALLBACK_BUCKET" --create-bucket-configuration LocationConstraint=$REGION --region $REGION 2>&1 || true)
+              echo "Create error: $ERR"
+              if echo "$ERR" | grep -qi "BucketAlreadyExists"; then
+                echo "BucketAlreadyExists: the requested bucket name is already taken in the global S3 namespace. Choose a different name or use an existing bucket you control.";
+              fi
+              if echo "$ERR" | grep -qi "AccessDenied"; then
+                echo "AccessDenied: your AWS credentials/role don't have permission to create or access the bucket. Check IAM permissions (s3:CreateBucket, s3:ListBucket, s3:GetObject, s3:PutObject).";
+              fi
+              exit 1
+            fi
+          fi
+
+      - name: Terraform Init
+        run: |
+          # Resolve effective bucket: prefere output do passo ensure-backend, senão o configurado no input
+          if [ -n "${{ steps.ensure-backend.outputs.bucket_name }}" ]; then
+            EFFECTIVE_BUCKET="${{ steps.ensure-backend.outputs.bucket_name }}"
+          else
+            EFFECTIVE_BUCKET="${{ inputs.aws-statefile-s3-bucket }}"
+          fi
+          echo "Using backend bucket: $EFFECTIVE_BUCKET"
+          export TF_VAR_bucket_name="$EFFECTIVE_BUCKET"
+          export TF_VAR_aws_region="${{ inputs.aws-region }}"
+          cd Infra && terraform init \
+            -backend-config="bucket=${EFFECTIVE_BUCKET}" \
+            -backend-config="key=${{ github.event.repository.name }}" \
+            -backend-config="region=${{ inputs.aws-region }}" \
+            -backend-config="dynamodb_table=${{ inputs.aws-lock-dynamodb-table }}"
+
+      - name: Terraform Validate
+        run: |
+          # ensure TF_VAR_bucket_name is set to the effective bucket
+          if [ -n "${{ steps.ensure-backend.outputs.bucket_name }}" ]; then
+            EFFECTIVE_BUCKET="${{ steps.ensure-backend.outputs.bucket_name }}"
+          else
+            EFFECTIVE_BUCKET="${{ inputs.aws-statefile-s3-bucket }}"
+          fi
+          export TF_VAR_bucket_name="$EFFECTIVE_BUCKET"
+          export TF_VAR_aws_region="${{ inputs.aws-region }}"
+          cd Infra && terraform validate
+
+      - name: Terraform Destroy
+        if: steps.read-destroy-config.outputs.destroy == 'true'
+        id: terraform-destroy
+        run: |
+          if [ -n "${{ steps.ensure-backend.outputs.bucket_name }}" ]; then
+            EFFECTIVE_BUCKET="${{ steps.ensure-backend.outputs.bucket_name }}"
+          else
+            EFFECTIVE_BUCKET="${{ inputs.aws-statefile-s3-bucket }}"
+          fi
+          export TF_VAR_bucket_name="$EFFECTIVE_BUCKET"
+          export TF_VAR_aws_region="${{ inputs.aws-region }}"
+          cd Infra &&
+          terraform workspace select ${{ inputs.environment }} || terraform workspace new ${{ inputs.environment }} &&
+          terraform destroy -var-file="./envs/${{ inputs.environment }}/terraform.tfvars" -auto-approve
+
+      - name: Terraform Plan
+        if: steps.read-destroy-config.outputs.destroy != 'true'
+        id: terraform-plan
+        run: |
+          if [ -n "${{ steps.ensure-backend.outputs.bucket_name }}" ]; then
+            EFFECTIVE_BUCKET="${{ steps.ensure-backend.outputs.bucket_name }}"
+          else
+            EFFECTIVE_BUCKET="${{ inputs.aws-statefile-s3-bucket }}"
+          fi
+          export TF_VAR_bucket_name="$EFFECTIVE_BUCKET"
+          export TF_VAR_aws_region="${{ inputs.aws-region }}"
+          cd Infra &&
+          terraform workspace select ${{ inputs.environment }} || terraform workspace new ${{ inputs.environment }} &&
+          terraform plan -var-file="./envs/${{ inputs.environment }}/terraform.tfvars" -out="${{ inputs.environment }}.plan"
+
+      - name: Terraform Apply
+        if: steps.read-destroy-config.outputs.destroy != 'true'
+        id: terraform-apply
+        run: |
+          if [ -n "${{ steps.ensure-backend.outputs.bucket_name }}" ]; then
+            EFFECTIVE_BUCKET="${{ steps.ensure-backend.outputs.bucket_name }}"
+          else
+            EFFECTIVE_BUCKET="${{ inputs.aws-statefile-s3-bucket }}"
+          fi
+          export TF_VAR_bucket_name="$EFFECTIVE_BUCKET"
+          export TF_VAR_aws_region="${{ inputs.aws-region }}"
+          cd Infra &&
+          terraform workspace select ${{ inputs.environment }} || terraform workspace new ${{ inputs.environment }} &&
+          terraform apply "${{ inputs.environment }}.plan"
