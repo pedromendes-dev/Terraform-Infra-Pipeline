@@ -1,23 +1,20 @@
-name: "Dev Deploy"
+name: "DEV DEPLOY"
 
-# Gatilho — roda quando fizer push na branch 'develop'.
 on:
   push:
     branches:
       - develop
 
-permissions:         # Permissões do token de acesso do GitHub
+permissions:
   id-token: write
   contents: read
 
-# Jobs — define as etapas do workflow que serão executadas.
 jobs:
   terraform:
-    uses: ./.github/workflows/terraform.yml          # Reutiliza o workflow terraform.yml
-    with:     # Passar parâmetros para o workflow reutilizável
-      environment: "dev"
-      aws-region: ${{ secrets.AWS_REGION }}
-    secrets:
-      AWS_ASSUME_ROLE_ARN: ${{ secrets.AWS_ASSUME_ROLE_ARN }}
-      AWS_STATEFILE_S3_BUCKET: ${{ secrets.AWS_STATEFILE_S3_BUCKET }}
-      AWS_LOCK_DYNAMODB_TABLE: ${{ secrets.AWS_LOCK_DYNAMODB_TABLE }}
+    uses: ./.github/workflows/terraform.yml
+    with:
+      environment: dev
+      aws-assume-role-arn: "arn:aws:iam::559050205686:role/github-action-pedromende-dev-pipeline"
+      aws-region: "us-east-2"
+      aws-statefile-s3-bucket: "pedromendes-dev-sa-east-1-tarraform-statefile"
+      aws-lock-dynamodb-table: "pedromendes-dev-sa-east-1-terraform-lock"
