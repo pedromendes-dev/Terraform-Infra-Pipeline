@@ -42,6 +42,25 @@ cd Infra
   que suas credenciais/role tenham permissão para acessar/criar o bucket (s3:CreateBucket,
   s3:ListBucket, s3:GetObject, s3:PutObject).
 
+## Troubleshooting rápido: problemas com bucket S3
+
+- Erro "InvalidBucketName" ao criar o bucket:
+  - Causa: o nome do bucket não atende às regras do S3 (maiusculas, caracteres inválidos, comprimento > 63, começa/termina com '.' ou '-').
+  - Ação: escolha um nome válido (minúsculas, 3-63 chars, apenas a-z, 0-9, '-' e '.') ou habilite o input `allow-create-bucket` no workflow para que o pipeline tente criar um bucket fallback sanitizado.
+
+- Permissões negadas (AccessDenied):
+  - Causa: a role/credenciais usadas pelo runner não têm permissão para criar ou acessar o bucket.
+  - Ação: conceda permissões IAM mínimas: s3:CreateBucket (se for criar), s3:ListBucket, s3:GetObject, s3:PutObject, s3:PutBucketVersioning e kms:Encrypt/Decrypt se estiver usando KMS.
+
+- Bucket já existe (BucketAlreadyExists):
+  - Causa: o nome escolhido está em uso no namespace global do S3.
+  - Ação: escolha um nome único (adicionar sufixo com hash ou account id) ou forneça um bucket existente ao workflow.
+
+## Como usar o input `allow-create-bucket`
+
+- No GitHub Actions (via UI) ao executar o workflow, marque `allow-create-bucket` = true para permitir que o workflow crie automaticamente um bucket fallback se o bucket fornecido não existir.
+- Atenção: a criação automática só funcionará se a role/credenciais do runner possuírem permissão `s3:CreateBucket`.
+
 ---
 
 Desenvolvido por Build & Run
