@@ -1,0 +1,62 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowS3BackendOperations",
+      "Effect": "Allow",
+      "Action": [
+        "s3:CreateBucket",
+        "s3:ListBucket",
+        "s3:GetBucketLocation",
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject",
+        "s3:PutBucketVersioning",
+        "s3:PutEncryptionConfiguration",
+        "s3:PutBucketAcl",
+        "s3:PutBucketEncryption"
+      ],
+      "Resource": [
+        "arn:aws:s3:::pedromendes-dev-us-east-2-tarraform-statefile",
+        "arn:aws:s3:::pedromendes-dev-us-east-2-tarraform-statefile/*",
+        "arn:aws:s3:::prod-us-east-2-buildrun-video-pipeline",
+        "arn:aws:s3:::prod-us-east-2-buildrun-video-pipeline/*",
+        "arn:aws:s3:::Terraform-Infra-Pipeline-dev-559050205686-tfstate",
+        "arn:aws:s3:::Terraform-Infra-Pipeline-dev-559050205686-tfstate/*"
+      ]
+    },
+    {
+      "Sid": "AllowDynamoDBLockTable",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:CreateTable",
+        "dynamodb:DescribeTable",
+        "dynamodb:Query",
+        "dynamodb:GetItem",
+        "dynamodb:PutItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:UpdateItem"
+      ],
+      "Resource": "arn:aws:dynamodb:us-east-2:559050205686:table/pedromendes-dev-us-east-2-terraform-lock"
+    },
+    {
+      "Sid": "AllowKMSIfNeeded",
+      "Effect": "Allow",
+      "Action": [
+        "kms:Encrypt",
+        "kms:Decrypt",
+        "kms:GenerateDataKey"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "AllowSTSAssumeRole",
+      "Effect": "Allow",
+      "Action": [
+        "sts:GetCallerIdentity",
+        "sts:AssumeRole"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

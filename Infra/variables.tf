@@ -2,7 +2,8 @@
 # AVISO: não altere este valor em produção a menos que saiba o que está fazendo.
 # É normalmente definido por arquivo de variáveis em Infra/envs/* ou por CI (TF_VAR_bucket_name).
 variable "bucket_name" {
-  type = string
+  type        = string
+  description = "Nome do bucket S3 que armazenará o state do Terraform. Deve obedecer às regras de nomenclatura do S3: letras minúsculas, números, traço (-) e ponto (.), entre 3 e 63 caracteres."
 }
 
 # Região AWS usada pelo provider e pelo backend.
@@ -10,6 +11,6 @@ variable "bucket_name" {
 # Se rodar localmente, exporte AWS_REGION ou defina TF_VAR_aws_region antes de executar o Terraform.
 variable "aws_region" {
   type        = string
-  description = "Região AWS a ser usada pelo provedor e pelo backend"
+  description = "Região AWS a ser usada pelo provedor e pelo backend (ex: us-east-2)."
   default     = "us-east-2"
 }

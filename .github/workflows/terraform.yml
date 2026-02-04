@@ -18,6 +18,14 @@ on:
       aws-lock-dynamodb-table:
         type: string
         required: true
+      aws-kms-key-arn:
+        type: string
+        required: false
+        default: ""
+      # allow-create-bucket: quando true, o workflow tentará criar um bucket fallback
+      # automaticamente caso o bucket fornecido não exista. Use com cuidado; a criação
+      # só será tentada se a role/credenciais do runner tiverem permissão (s3:CreateBucket).
+      # No GitHub Actions, execute o workflow marcando este input como 'true' para permitir a criação.
       allow-create-bucket:
         type: boolean
         required: false
@@ -63,12 +71,58 @@ jobs:
       - name: Garantir que o bucket S3 do backend existe
         id: ensure-backend
         run: |
+          # Em pull requests vindos de forks/branches não temos acesso a secrets/roles ou não queremos criar recursos.
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            echo "Pull request detectado: pulando verificação/criação do bucket S3 (usaremos backend local para validação).";
+            # Exporta o bucket de input como saída apenas para manter compatibilidade; o valor pode não ser acessível no runner de forks.
+            echo "bucket_name=${{ inputs.aws-statefile-s3-bucket }}" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
           REGION="${{ inputs.aws-region }}"
-          BUCKET="${{ inputs.aws-statefile-s3-bucket }}"
-          echo "Verificando bucket S3: $BUCKET na região $REGION"
+          ORIGINAL_BUCKET="${{ inputs.aws-statefile-s3-bucket }}"
+          echo "Verificando bucket S3 fornecido: $ORIGINAL_BUCKET na região $REGION"
 
           if ! command -v aws >/dev/null 2>&1; then
             echo "ERRO: aws CLI não encontrado no runner. Não é possível verificar/criar o bucket S3.";
+            exit 1
+          fi
+
+          # Validar credenciais (pre-check)
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/null || true)
+          if [ -z "$ACCOUNT_ID" ]; then
+            echo "ERRO: não foi possível obter o Account ID com as credenciais atuais. Verifique as credenciais/role fornecidas ao workflow.";
+            exit 1
+          fi
+
+          # Sanitizar o nome do bucket fornecido para seguir regras do S3
+          # Regras aplicadas: minúsculas, caracteres permitidos a-z0-9.-, substituir outros por '-', colapsar '-' repetidos,
+          # remover leading/trailing '-' ou '.', truncar para 63 caracteres e garantir início/fim alfanumérico.
+          BUCKET=$(printf "%s" "$ORIGINAL_BUCKET" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9.-]/-/g; s/-\{2,\}/-/g; s/^\.+//; s/\.+$//; s/^-//; s/-$//')
+          # remover múltiplos pontos/ combinações problemáticas
+          BUCKET=$(printf "%s" "$BUCKET" | sed 's/\.{2,}/./g; s/\.-/-/g; s/-\./-/g')
+          # garantir comprimento máximo 63
+          if [ ${#BUCKET} -gt 63 ]; then
+            # preserva começo e um sufixo hash para diminuir colisões
+            PREFIX=$(printf "%s" "$BUCKET" | cut -c1-40)
+            SUF=$(printf "%s" "$BUCKET" | sha1sum | awk '{print $1}' | cut -c1-8 2>/dev/null || date +%s | cut -c1-8)
+            BUCKET="${PREFIX}-${SUF}"
+          fi
+          # garantir início/fim alfanumérico
+          BUCKET=$(printf "%s" "$BUCKET" | sed 's/^[^a-z0-9]\+//; s/[^a-z0-9]\+$//')
+
+          if [ -z "$BUCKET" ]; then
+            echo "ERRO: o nome do bucket resultante após sanitização ficou vazio. Forneça um nome de bucket válido via input 'aws-statefile-s3-bucket' ou habilite 'allow-create-bucket' para permitir ao workflow criar um fallback.";
+            exit 1
+          fi
+
+          if [ "$BUCKET" != "$ORIGINAL_BUCKET" ]; then
+            echo "Nota: o nome do bucket informado foi sanitizado de '$ORIGINAL_BUCKET' para '$BUCKET' para atender às regras do S3.";
+          fi
+
+          # Regex simples para validar formato final (começa com alfanumérico, termina com alfanumérico, contém apenas a-z0-9.-)
+          if ! printf "%s" "$BUCKET" | grep -Eq '^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$'; then
+            echo "ERRO: nome do bucket '$BUCKET' não atende às regras de validação esperadas para S3. Regras: minúsculas, 3-63 chars, apenas a-z, 0-9, '-' e '.'.";
             exit 1
           fi
 
@@ -82,28 +136,22 @@ jobs:
             if [ "${{ inputs.allow-create-bucket }}" != "true" ]; then
               echo "AVISO: criação automática de bucket está desabilitada (input allow-create-bucket != true).";
               echo "Forneça um bucket existente através do input 'aws-statefile-s3-bucket' ou habilite 'allow-create-bucket' para permitir que o workflow crie um bucket fallback.";
+              echo "Exemplo (via GitHub UI): marque 'allow-create-bucket' = true ao disparar o workflow.";
               exit 1
             fi
+
             echo "Tentando criar um bucket alternativo (criação automática habilitada)..."
-            # Obtain account id to build a safe unique bucket name
-            ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text || true)
             REPO="${{ github.event.repository.name }}"
             ENV="${{ inputs.environment }}"
-            # Sanitize repository and environment strings to comply with S3 bucket naming rules:
-            # - must be lowercase
-            # - allowed characters: a-z, 0-9, dot and hyphen
-            # - replace other chars with hyphen, collapse repeated hyphens, and trim
-            SAFE_REPO=$(echo "$REPO" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9.-]/-/g; s/-\{2,\}/-/g; s/^-//; s/-$//')
-            SAFE_ENV=$(echo "$ENV" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9.-]/-/g; s/-\{2,\}/-/g; s/^-//; s/-$//')
-            # Truncate parts to keep final name <= 63 chars
-            SAFE_REPO=${SAFE_REPO:0:30}
-            SAFE_ENV=${SAFE_ENV:0:12}
             if [ -n "$ACCOUNT_ID" ] && [ "$ACCOUNT_ID" != "None" ]; then
               ID_PART="$ACCOUNT_ID"
             else
               ID_PART="$(date +%s)"
             fi
-            # Use a short hash to ensure uniqueness without long names
+            SAFE_REPO=$(echo "$REPO" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9.-]/-/g; s/-\{2,\}/-/g; s/^-//; s/-$//')
+            SAFE_ENV=$(echo "$ENV" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9.-]/-/g; s/-\{2,\}/-/g; s/^-//; s/-$//')
+            SAFE_REPO=${SAFE_REPO:0:30}
+            SAFE_ENV=${SAFE_ENV:0:12}
             if command -v sha1sum >/dev/null 2>&1; then
               HASH=$(printf "%s-%s-%s" "$REPO" "$ENV" "$ID_PART" | sha1sum | awk '{print $1}' | cut -c1-8)
             else
@@ -113,7 +161,6 @@ jobs:
               HASH="$(date +%s | cut -c1-8)"
             fi
             FALLBACK_BUCKET="${SAFE_REPO}-${SAFE_ENV}-${HASH}-tfstate"
-            # ensure lowercase and remove any accidental leading/trailing hyphen
             FALLBACK_BUCKET=$(echo "$FALLBACK_BUCKET" | tr '[:upper:]' '[:lower:]' | sed 's/^-//; s/-$//')
             echo "Tentando bucket alternativo: $FALLBACK_BUCKET"
 
@@ -125,6 +172,20 @@ jobs:
 
             if aws s3api head-bucket --bucket "$FALLBACK_BUCKET" --region "$REGION" >/dev/null 2>&1; then
               echo "Bucket alternativo '$FALLBACK_BUCKET' criado e acessível."
+
+              # Habilitar versioning
+              echo "Habilitando versioning no bucket $FALLBACK_BUCKET..."
+              aws s3api put-bucket-versioning --bucket "$FALLBACK_BUCKET" --versioning-configuration Status=Enabled --region $REGION >/dev/null 2>&1 || true
+
+              # Configurar criptografia do bucket: usar KMS se informado, senão SSE-S3
+              if [ -n "${{ inputs.aws-kms-key-arn }}" ]; then
+                echo "Configurando criptografia KMS no bucket $FALLBACK_BUCKET com a key ${{ inputs.aws-kms-key-arn }}"
+                aws s3api put-bucket-encryption --bucket "$FALLBACK_BUCKET" --server-side-encryption-configuration '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"aws:kms","KMSMasterKeyID":"'"${{ inputs.aws-kms-key-arn }}"'"}}]}' --region $REGION >/dev/null 2>&1 || true
+              else
+                echo "Configurando criptografia SSE-S3 (AES256) no bucket $FALLBACK_BUCKET"
+                aws s3api put-bucket-encryption --bucket "$FALLBACK_BUCKET" --server-side-encryption-configuration '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}' --region $REGION >/dev/null 2>&1 || true
+              fi
+
               echo "bucket_name=$FALLBACK_BUCKET" >> $GITHUB_OUTPUT
             else
               echo "ERRO: falha ao criar ou acessar o bucket '$FALLBACK_BUCKET'. Verificando causa..."
@@ -132,6 +193,9 @@ jobs:
               echo "Erro ao criar: $ERR"
               if echo "$ERR" | grep -qi "BucketAlreadyExists"; then
                 echo "BucketAlreadyExists: o nome do bucket solicitado já está em uso no namespace global do S3. Escolha um nome diferente ou use um bucket existente sob seu controle.";
+              fi
+              if echo "$ERR" | grep -qi "InvalidBucketName"; then
+                echo "InvalidBucketName: o nome do bucket não é válido para o S3. Verifique caracteres e comprimento (3-63).";
               fi
               if echo "$ERR" | grep -qi "AccessDenied"; then
                 echo "AccessDenied: suas credenciais/role AWS não têm permissão para criar ou acessar o bucket. Verifique permissões IAM (s3:CreateBucket, s3:ListBucket, s3:GetObject, s3:PutObject).";
@@ -151,11 +215,18 @@ jobs:
           echo "Usando bucket do backend: $EFFECTIVE_BUCKET"
           export TF_VAR_bucket_name="$EFFECTIVE_BUCKET"
           export TF_VAR_aws_region="${{ inputs.aws-region }}"
-          cd Infra && terraform init \
-            -backend-config="bucket=${EFFECTIVE_BUCKET}" \
-            -backend-config="key=${{ github.event.repository.name }}" \
-            -backend-config="region=${{ inputs.aws-region }}" \
-            -backend-config="dynamodb_table=${{ inputs.aws-lock-dynamodb-table }}"
+          cd Infra && \
+          # Se for um pull_request, não inicializamos o backend remoto (evita dependência de bucket/credenciais no PR)
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then \
+            echo "Pull request: inicializando Terraform sem backend remoto (backend local)"; \
+            terraform init -backend=false; \
+          else \
+            terraform init \
+              -backend-config="bucket=${EFFECTIVE_BUCKET}" \
+              -backend-config="key=${{ github.event.repository.name }}" \
+              -backend-config="region=${{ inputs.aws-region }}" \
+              -backend-config="dynamodb_table=${{ inputs.aws-lock-dynamodb-table }}"; \
+          fi
 
       - name: Validar Terraform
         run: |
