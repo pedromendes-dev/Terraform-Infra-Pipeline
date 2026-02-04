@@ -26,7 +26,23 @@ No entanto, esses recursos precisam ser criados **antes** de configurar o backen
 
 ## Como usar
 
-### Opção 1: Script automatizado (recomendado)
+### Opção 1: GitHub Actions (mais fácil)
+
+Se você tem acesso ao repositório no GitHub:
+
+1. Vá para a aba **Actions** no repositório
+2. Selecione o workflow **"Bootstrap Backend (S3 + DynamoDB)"**
+3. Clique em **"Run workflow"**
+4. Confirme ou modifique os valores:
+   - AWS Region (padrão: us-east-2)
+   - S3 Bucket Name (padrão: pedromendes-dev-us-east-2-tarraform-statefile)
+   - DynamoDB Table Name (padrão: pedromendes-dev-us-east-2-terraform-lock)
+5. Clique em **"Run workflow"** novamente para confirmar
+6. Aguarde a conclusão (geralmente leva menos de 2 minutos)
+
+Esta opção usa as credenciais AWS configuradas no GitHub Actions e não requer configuração local.
+
+### Opção 2: Script automatizado local
 
 ```bash
 cd bootstrap
@@ -40,7 +56,7 @@ O script irá:
 4. Pedir confirmação
 5. Criar os recursos
 
-### Opção 2: Comandos manuais
+### Opção 3: Comandos Terraform manuais
 
 ```bash
 cd bootstrap

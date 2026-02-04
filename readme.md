@@ -20,14 +20,22 @@ Uma visão rápida do fluxo da pipeline e do workflow da infraestrutura.
 
 ⚠️ **IMPORTANTE**: Antes de usar esta pipeline pela primeira vez, você precisa criar o bucket S3 e a tabela DynamoDB para o backend do Terraform.
 
-**Opção 1: Usando o script de bootstrap (recomendado)**
+**Opção 1: Via GitHub Actions (mais fácil)**
+
+1. Vá para a aba "Actions" no GitHub
+2. Selecione o workflow "Bootstrap Backend (S3 + DynamoDB)"
+3. Clique em "Run workflow"
+4. Confirme os valores (região, nome do bucket, nome da tabela)
+5. Execute e aguarde a conclusão
+
+**Opção 2: Script local (linha de comando)**
 
 ```bash
 cd bootstrap
 ./bootstrap.sh
 ```
 
-**Opção 2: Manualmente via Terraform**
+**Opção 3: Terraform local (avançado)**
 
 ```bash
 cd bootstrap
@@ -35,7 +43,7 @@ terraform init
 terraform apply
 ```
 
-**Opção 3: Manualmente via AWS Console**
+**Opção 4: AWS Console (manual)**
 
 Crie manualmente no AWS Console:
 - **Bucket S3**: `pedromendes-dev-us-east-2-tarraform-statefile`
@@ -78,6 +86,20 @@ cd Infra
   s3:ListBucket, s3:GetObject, s3:PutObject).
 
 ## Troubleshooting rápido: problemas com bucket S3
+
+⚠️ **ERRO COMUM**: "O bucket não existe ou não está acessível" + "AVISO: criação automática de bucket está desabilitada"
+
+**Causa**: O bucket S3 e/ou a tabela DynamoDB do backend não existem.
+
+**Solução rápida para dev**: O workflow de dev já tem `allow-create-bucket: true` e criará o bucket automaticamente se tiver permissões.
+
+**Solução para prod**: 
+1. **Recomendado**: Execute o bootstrap (veja "Como começar" acima)
+2. **Alternativa**: Habilite `allow-create-bucket: true` em `.github/workflows/main.yml` (linha 20)
+   - ⚠️ Isso cria apenas o bucket S3, **não cria a tabela DynamoDB**
+   - Você ainda precisará criar a tabela DynamoDB manualmente ou via bootstrap
+
+---
 
 - Erro "InvalidBucketName" ao criar o bucket:
   - Causa: o nome do bucket não atende às regras do S3 (maiusculas, caracteres inválidos, comprimento > 63, começa/termina com '.' ou '-').

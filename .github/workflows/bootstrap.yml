@@ -1,0 +1,85 @@
+name: "Bootstrap Backend (S3 + DynamoDB)"
+
+on:
+  workflow_dispatch:
+    inputs:
+      aws-region:
+        description: 'AWS Region'
+        required: true
+        default: 'us-east-2'
+        type: string
+      bucket-name:
+        description: 'S3 Bucket Name'
+        required: true
+        default: 'pedromendes-dev-us-east-2-tarraform-statefile'
+        type: string
+      dynamodb-table-name:
+        description: 'DynamoDB Table Name'
+        required: true
+        default: 'pedromendes-dev-us-east-2-terraform-lock'
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fazer checkout do código
+        uses: actions/checkout@v4
+
+      - name: Instalar Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.8.3
+
+      - name: Configurar credenciais AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::559050205686:role/github-action-pedromende-dev-pipeline
+          role-session-name: GitHub_Bootstrap_via_FederatedOIDC
+          aws-region: ${{ inputs.aws-region }}
+
+      - name: Bootstrap - Inicializar Terraform
+        run: |
+          cd bootstrap
+          terraform init
+
+      - name: Bootstrap - Validar configuração
+        run: |
+          cd bootstrap
+          terraform validate
+
+      - name: Bootstrap - Planejar mudanças
+        id: plan
+        run: |
+          cd bootstrap
+          terraform plan \
+            -var="aws_region=${{ inputs.aws-region }}" \
+            -var="bucket_name=${{ inputs.bucket-name }}" \
+            -var="dynamodb_table_name=${{ inputs.dynamodb-table-name }}" \
+            -out=bootstrap.tfplan
+
+      - name: Bootstrap - Aplicar mudanças
+        run: |
+          cd bootstrap
+          terraform apply -auto-approve bootstrap.tfplan
+
+      - name: Bootstrap - Mostrar outputs
+        run: |
+          cd bootstrap
+          terraform output
+
+      - name: Resumo
+        run: |
+          echo "## ✅ Bootstrap concluído com sucesso!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Os seguintes recursos foram criados:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Bucket S3**: \`${{ inputs.bucket-name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Tabela DynamoDB**: \`${{ inputs.dynamodb-table-name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Região**: \`${{ inputs.aws-region }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Agora você pode executar os workflows de deploy normalmente." >> $GITHUB_STEP_SUMMARY
