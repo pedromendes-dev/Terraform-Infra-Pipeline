@@ -16,6 +16,41 @@ Uma visão rápida do fluxo da pipeline e do workflow da infraestrutura.
 
 ## Como começar
 
+### Passo 0: Bootstrap (criar backend S3 + DynamoDB)
+
+⚠️ **IMPORTANTE**: Antes de usar esta pipeline pela primeira vez, você precisa criar o bucket S3 e a tabela DynamoDB para o backend do Terraform.
+
+**Opção 1: Usando o script de bootstrap (recomendado)**
+
+```bash
+cd bootstrap
+./bootstrap.sh
+```
+
+**Opção 2: Manualmente via Terraform**
+
+```bash
+cd bootstrap
+terraform init
+terraform apply
+```
+
+**Opção 3: Manualmente via AWS Console**
+
+Crie manualmente no AWS Console:
+- **Bucket S3**: `pedromendes-dev-us-east-2-tarraform-statefile`
+  - Região: `us-east-2`
+  - Versionamento: habilitado
+  - Criptografia: habilitada (AES256)
+- **Tabela DynamoDB**: `pedromendes-dev-us-east-2-terraform-lock`
+  - Região: `us-east-2`
+  - Chave primária: `LockID` (String)
+  - Billing mode: PAY_PER_REQUEST
+
+📖 Veja mais detalhes em [`bootstrap/README.md`](bootstrap/README.md)
+
+### Próximos passos
+
 1. Configure as secrets no GitHub: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION` (usar `us-east-2`).
 2. Proteja o Environment `production` antes de permitir o `apply` manual.
 3. Para rodar localmente (dev):
